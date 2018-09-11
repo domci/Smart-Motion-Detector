@@ -51,7 +51,7 @@ Of course you will need Python 3 and some libraries so on Ubuntu do:
 
 then we need to install the dependencies:
 
-<script src="https://gist.github.com/domci/6d39c04407fcfafe19df8e284bb063aa.js"></script>
+{% gist 6d39c04407fcfafe19df8e284bb063aa %}
 
 
 and [downloaded the support file](https://community.ubnt.com/t5/UniFi-Video/How-to-find-the-UUID-of-a-camera/m-p/2322104/highlight/true#M102368) to get the Camera's UUID
