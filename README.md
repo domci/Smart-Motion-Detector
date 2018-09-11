@@ -16,4 +16,11 @@ While playing around with my new gadget I found out that the NVR stores a .JPG S
 
 So the general flow is:
 
+1. NVR (camera) detects Motion
+2. writes new line to motion-logfile
+3. detector.py scans logfile
+4. detector.py parses snapshot path
+5. detector.py runs object detection
+6. if interesting object was detected send push Notification via [Pushover](https://pushover.net)
+
 
