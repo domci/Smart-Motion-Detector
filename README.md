@@ -7,3 +7,5 @@ After some research I settled on Ubiquiti UVC-G3 as its price is reasonable, it 
 There are some Cameras with smart motion detection and even face recognition available but they tend to be quite expensive and have a closed ecosystem. A No-Go for me since I like playing around with my gadgets freely.
 
 So after some research and thanks to Arun Ponnusamy Blog Post (https://www.arunponnusamy.com/yolo-object-detection-opencv-python.html) I set up a System that uses the G3 Cameras in-built Motion Detector and runs a pretrained YOLO Algorithm (You Only Look Once, see: https://pjreddie.com/darknet/) to check each motion capture for objects of interest.
+
+tbc
