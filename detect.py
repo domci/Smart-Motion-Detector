@@ -227,6 +227,7 @@ while True:
                                             class_ids.append(class_id)
                                             confidences.append(float(confidence))
                                             boxes.append([x, y, w, h])
+                                            
 
                                 indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
 
@@ -244,30 +245,32 @@ while True:
                                 cv2.waitKey()
                                 
                                 # Send Push Notification:
-                                dtime_cur = time.time()
-                                if len(confidences) and (dtime_cur - dtime_last) > time_between_push_notifications:
+                                if len(confidences):
+                                    dtime_cur = time.time()
+                                    if (dtime_cur - dtime_last) > time_between_push_notifications:
+                                    
                                         # Write to Log File
-                                        logger.info(str(ts) + '   ' + str([classes[i] for i in class_ids]) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + camera +'\'   Video path is: \'' + video_path + '\'')
+                                        logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + camera +'\'   Video path is: \'' + video_path + '\'')
                                         
-                                        print(str([classes[i] for i in class_ids]) + ' detected!')
+                                        print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
                                         
                                         # Sent Push Notification via Pushover:
-                                        data['message'] = str([classes[i] for i in class_ids]) + ' detected!'
+                                        data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
                                         r = requests.post("https://api.pushover.net/1/messages.json", data = data,
                                         files = {
                                           "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
                                         })
                                         print(r.text)
+                                        dtime_last = dtime_cur
+                                    else:
+                                        print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + "Last Notification too recently.")
                                 else:
-                                    if not len(confidences):
-                                        print("No Object Detected.")
-                                        
-                                    if (dtime_cur - dtime_last) > time_between_push_notifications:
-                                        print("Detected: " + str([classes[i] for i in class_ids]) + "Last Notification too recently.")
+                                    print("No Object Detected.")
+
                                     
                                 
                                 confidences = []
-                                dtime_last = dtime_cur
+                                
                             #cv2.imshow("object detection", image)
 
                             else:

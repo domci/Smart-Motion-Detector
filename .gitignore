@@ -1,3 +1,9 @@
+*.log
+detect.cron
+Detect.ipynb
+pushover_example.py
+test.txt
+YOLO_Test.py
 keys.json
 support_dbdevices.json
 *.jpg
