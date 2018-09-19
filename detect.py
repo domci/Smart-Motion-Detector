@@ -30,9 +30,9 @@ from logging.handlers import TimedRotatingFileHandler
 
 
 
-args =  {'classes': '/home/cichons/ObjectDetectionYolo/classes.txt',
-         'weights': '/home/cichons/ObjectDetectionYolo/yolov3.weights',
-         'config': '/home/cichons/ObjectDetectionYolo/yolov3.cfg'}
+args =  {'classes': '/home/cichons/Smart-Motion-Detector/classes.txt',
+         'weights': '/home/cichons/Smart-Motion-Detector/yolov3.weights',
+         'config': '/home/cichons/Smart-Motion-Detector/yolov3.cfg'}
 
 
 ################################################
@@ -57,10 +57,10 @@ logger.addHandler(handler)
 ################################################
 
 # Load Pushover Key File
-data=json.loads(open('/home/cichons/ObjectDetectionYolo/keys.json').read())
+data=json.loads(open('/home/cichons/Smart-Motion-Detector/keys.json').read())
 
 # Load Camera UUIDs from file:
-with open('/home/cichons/ObjectDetectionYolo/support_dbdevices.json') as f:
+with open('/home/cichons/Smart-Motion-Detector/support_dbdevices.json') as f:
     support_dbdevices = json.load(f)
 
 cameras = {}
@@ -178,12 +178,16 @@ print(
 
 mtime_last = 0
 dtime_last = 0
+boxes_last =  []
 net = cv2.dnn.readNet(args['weights'], args['config'])
+mtime_cur = os.path.getmtime(LOG_FILE)
+
+
 
 i = 1
 while True:
-    mtime_cur = os.path.getmtime(LOG_FILE)
-
+    
+    
     if mtime_cur != mtime_last:
         # Monitor Log File:
         for i in tail(LOG_FILE, 1):
@@ -193,7 +197,13 @@ while True:
                 ts = datetime.datetime.fromtimestamp(int(start) / 1e3)
                 recording_id = i.split("motionRecording:")[1].split(" ")[0]
                 print(str(ts) + '   Found Motion Recording!')
+                mtime_last = mtime_cur
+
+
                 #print(start, cam)
+                
+                confidences = []
+                
                 for root, directories, filenames in os.walk('/home/cichons/unifi-video/videos/'):
                     for filename in filenames: 
                         if fnmatch.fnmatch(filename, '*' + start + '*.mp4'):
@@ -202,7 +212,7 @@ while True:
                             img_path = root +'/' + filename
                             print(str(ts) + '   Running Object detection on: \'' + img_path + '\' from Camera: \'' + camera +'\' ...')
                             logger.info(str(ts) + '   Trigger Count: ' + str(i) + 'Motion detected on Camera: \'' + camera +'\'   Running Object detection on: \'' + img_path + '\'')
-
+    
                             # Detect Objects:
                             image = cv2.imread(img_path)
                             if image is not None:
@@ -212,6 +222,7 @@ while True:
                                 net.setInput(blob)
                                 outs = net.forward(get_output_layers(net))
                                 
+                                class_ids = []
                                 for out in outs:
                                     for detection in out:
                                         scores = detection[5:]
@@ -228,53 +239,55 @@ while True:
                                             confidences.append(float(confidence))
                                             boxes.append([x, y, w, h])
                                             
-
+    
                                 indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
-
-                                for i in indices:
-                                    i = i[0]
-                                    box = boxes[i]
-                                    x = box[0]
-                                    y = box[1]
-                                    w = box[2]
-                                    h = box[3]
-                                    draw_prediction(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
-                                boxed_img_path = '/home/cichons/unifi-video/object_detections/'+ str(start) +'_'+ str(camera) +'_'+ str(recording_id) + '.jpg' 
-                                cv2.imwrite(boxed_img_path, image)
-                                boxes = []
-                                cv2.waitKey()
-                                
-                                # Send Push Notification:
-                                if len(confidences):
-                                    dtime_cur = time.time()
-                                    if (dtime_cur - dtime_last) > time_between_push_notifications:
+                                if boxes != boxes_last:
+                                    for i in indices:
+                                        i = i[0]
+                                        box = boxes[i]
+                                        x = box[0]
+                                        y = box[1]
+                                        w = box[2]
+                                        h = box[3]
+                                        draw_prediction(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
+                                        
+                                    boxed_img_path = '/home/cichons/unifi-video/object_detections/'+ str(start) +'_'+ str(camera) +'_'+ str(recording_id) + '.jpg' 
+                                    cv2.imwrite(boxed_img_path, image)
+                                    boxes_last = boxes
                                     
-                                        # Write to Log File
-                                        logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + camera +'\'   Video path is: \'' + video_path + '\'')
-                                        
-                                        print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
-                                        
-                                        # Sent Push Notification via Pushover:
-                                        data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
-                                        r = requests.post("https://api.pushover.net/1/messages.json", data = data,
-                                        files = {
-                                          "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
-                                        })
-                                        print(r.text)
-                                        dtime_last = dtime_cur
-                                    else:
-                                        print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + "Last Notification too recently.")
+                                    cv2.waitKey()
+                                    
+                                    # Send Push Notification:
+                                    if len(confidences):
+                                        dtime_cur = time.time()
+                                        if boxes == boxes_last:
+                                            if (dtime_cur - dtime_last) > time_between_push_notifications:
+                                            
+                                                # Write to Log File
+                                                logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + camera +'\'   Video path is: \'' + video_path + '\'')
+                                                
+                                                print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
+                                                
+                                                # Sent Push Notification via Pushover:
+                                                data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
+                                                r = requests.post("https://api.pushover.net/1/messages.json", data = data,
+                                                files = {
+                                                  "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
+                                                })
+                                                print(r.text)
+                                                dtime_last = dtime_cur
+                                            else:
+                                                print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Last Notification too recently.")
+                                            
+                                    boxes = []
                                 else:
                                     print("No Object Detected.")
-
-                                    
-                                
-                                confidences = []
-                                
+    
                             #cv2.imshow("object detection", image)
-
+    
                             else:
                                 print('image: ' + img_path + ' not found')
-    mtime_last = mtime_cur
+    
+    
 
 #cv2.destroyAllWindows()
