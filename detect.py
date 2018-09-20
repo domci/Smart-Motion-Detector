@@ -8,23 +8,16 @@
 ################################################
 
 import os
-#import sys
-#import subprocess
-#import collections
 import time
-#import mmap
-#import pandas as pd
 import json
 import fnmatch
 import cv2
-#import argparse
 import numpy as np
 import requests
-#import json
 import datetime
 import logging
 from logging.handlers import TimedRotatingFileHandler
-#import time
+import datetime
 
 
 
@@ -97,7 +90,7 @@ boxes = []
 conf_threshold = 0.5
 nms_threshold = 0.4
 scale = 0.00392
-time_between_push_notifications = 300 
+time_between_push_notifications = 0 
 
 
 
@@ -107,8 +100,7 @@ target_classes = ['person',
  'car',
  'motorcycle',
  'bus',
- 'train',
- 'truck',
+ 'truck'
 ]
 
 
@@ -180,48 +172,53 @@ mtime_last = 0
 dtime_last = 0
 boxes_last =  []
 net = cv2.dnn.readNet(args['weights'], args['config'])
-mtime_cur = os.path.getmtime(LOG_FILE)
-
+mtime_cur = datetime.datetime.now()
+recording_id = 'None'
+recording_id_last = ''
 
 
 i = 1
 while True:
+    now = datetime.datetime.now()
+    date_path = str(now.year) + '/' + (now.month if len(str(now.month)) == 2 else '0' + str(now.month)) + '/' + str(now.day)
+    # Monitor Log File:
+    for i in tail(LOG_FILE, 1):
+        if WATCH_FOR.lower() in i.lower():
+            mtime_cur = datetime.datetime.fromtimestamp(float(i.split(' ')[0]))
+            camera_name_id = i.split("[")[1].split("]")[0].split("|")
+            start = i.split("START:")[1].split(" ")[0]
+            ts = datetime.datetime.fromtimestamp(int(start) / 1e3)
+            recording_id = i.split("motionRecording:")[1].split(" ")[0]
+            #recording_id = '5ba25ea1e4b0a01868310e29'
+            if recording_id == recording_id_last:
+                continue
+            print(str(ts) + '   Found Motion Recording on Camera ' + ' '.join(camera_name_id) + '. Recording ID is: ' + recording_id)
     
     
-    if mtime_cur != mtime_last:
-        # Monitor Log File:
-        for i in tail(LOG_FILE, 1):
-            if WATCH_FOR.lower() in i.lower():
-                camera = i.split("|")[1].split("]")[0]
-                start = i.split("START:")[1].split(" ")[0]
-                ts = datetime.datetime.fromtimestamp(int(start) / 1e3)
-                recording_id = i.split("motionRecording:")[1].split(" ")[0]
-                print(str(ts) + '   Found Motion Recording!')
-                mtime_last = mtime_cur
-
-
-                #print(start, cam)
-                
-                confidences = []
-                
-                for root, directories, filenames in os.walk('/home/cichons/unifi-video/videos/'):
-                    for filename in filenames: 
-                        if fnmatch.fnmatch(filename, '*' + start + '*.mp4'):
-                            video_path = root +'/' + filename
-                        if fnmatch.fnmatch(filename, '*' + recording_id + '*full.jpg'):
-                            img_path = root +'/' + filename
-                            print(str(ts) + '   Running Object detection on: \'' + img_path + '\' from Camera: \'' + camera +'\' ...')
-                            logger.info(str(ts) + '   Trigger Count: ' + str(i) + 'Motion detected on Camera: \'' + camera +'\'   Running Object detection on: \'' + img_path + '\'')
     
-                            # Detect Objects:
-                            image = cv2.imread(img_path)
-                            if image is not None:
+            confidences = []
+    
+            for root, directories, filenames in os.walk('/home/cichons/unifi-video/videos/'+ cameras[camera_name_id[1]] + '/' + date_path):
+                for filename in filenames: 
+                    if fnmatch.fnmatch(filename, '*' + start + '*.mp4'):
+                        video_path = root +'/' + filename
+                    if fnmatch.fnmatch(filename, '*' + recording_id + '*full.jpg'):
+                        img_path = root +'/' + filename
+                        print(str(ts) + '   Running Object detection on: \'' + img_path + '\' from Camera: \'' + ' '.join(camera_name_id) +'\' ...')
+                        logger.info(str(ts) + '   Trigger Count: ' + str(i) + 'Motion detected on Camera: \'' + ' '.join(camera_name_id) +'\'   Running Object detection on: \'' + img_path + '\'')
+    
+                        # Detect Objects:
+                        image = cv2.imread(img_path)
+                        if image is not None:
+                            try:
+    
                                 #image = cv2.resize(image, (0,0), fx=0.3, fy=0.3)
                                 (Height, Width) = image.shape[:2]
                                 blob = cv2.dnn.blobFromImage(image, scale, (416,416), (0,0,0), True, crop=False)
                                 net.setInput(blob)
                                 outs = net.forward(get_output_layers(net))
-                                
+    
+                                boxes == []
                                 class_ids = []
                                 for out in outs:
                                     for detection in out:
@@ -238,10 +235,14 @@ while True:
                                             class_ids.append(class_id)
                                             confidences.append(float(confidence))
                                             boxes.append([x, y, w, h])
-                                            
+                                if boxes == []:
+                                    print("No Object Detected.")
+                                    pass
     
                                 indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
                                 if boxes != boxes_last:
+                                    print(boxes)
+                                    print(boxes_last)
                                     for i in indices:
                                         i = i[0]
                                         box = boxes[i]
@@ -250,44 +251,47 @@ while True:
                                         w = box[2]
                                         h = box[3]
                                         draw_prediction(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
-                                        
-                                    boxed_img_path = '/home/cichons/unifi-video/object_detections/'+ str(start) +'_'+ str(camera) +'_'+ str(recording_id) + '.jpg' 
+    
+                                    boxed_img_path = '/home/cichons/unifi-video/object_detections/'+ str(start) +'_'+ str(camera_name_id[1]) +'_'+ str(recording_id) + '.jpg' 
                                     cv2.imwrite(boxed_img_path, image)
-                                    boxes_last = boxes
                                     
+    
                                     cv2.waitKey()
-                                    
+    
                                     # Send Push Notification:
                                     if len(confidences):
                                         dtime_cur = time.time()
                                         if boxes == boxes_last:
+                                            print('Object has been previously detected. Skipping this one.')
+                                        else:
                                             if (dtime_cur - dtime_last) > time_between_push_notifications:
-                                            
+    
                                                 # Write to Log File
-                                                logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + camera +'\'   Video path is: \'' + video_path + '\'')
-                                                
+                                                logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + ' '.join(camera_name_id) +'\'   Video path is: \'' + video_path + '\'')
+    
                                                 print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
-                                                
+    
                                                 # Sent Push Notification via Pushover:
                                                 data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
+                                                
                                                 r = requests.post("https://api.pushover.net/1/messages.json", data = data,
                                                 files = {
                                                   "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
                                                 })
+                                                
                                                 print(r.text)
                                                 dtime_last = dtime_cur
                                             else:
                                                 print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Last Notification too recently.")
-                                            
-                                    boxes = []
-                                else:
-                                    print("No Object Detected.")
+                                
+                                boxes_last = boxes
+                                boxes = []
+                            except Exception as err:
+                                print(err)
+                                pass
     
-                            #cv2.imshow("object detection", image)
-    
-                            else:
-                                print('image: ' + img_path + ' not found')
-    
-    
-
-#cv2.destroyAllWindows()
+                        else:
+                            print('image: ' + img_path + ' not found')
+                            pass
+            recording_id_last = recording_id
+            recording_id = ''
