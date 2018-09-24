@@ -18,9 +18,7 @@ import datetime
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import datetime
-
-
-
+import shelve
 
 
 args =  {'classes': '/home/cichons/Smart-Motion-Detector/classes.txt',
@@ -91,7 +89,7 @@ conf_threshold = 0.5
 nms_threshold = 0.4
 scale = 0.00392
 time_between_push_notifications = 0 
-
+px_dist = 10 # Minumum Distance in Pixels between current and prevouis Detection
 
 
 
@@ -152,8 +150,7 @@ def draw_prediction(img, class_id, confidence, x, y, x_plus_w, y_plus_h):
 
 
 
-print(
-    'Watching of ' + LOG_FILE + ' for ' + '*' + WATCH_FOR + '*' +
+print('Watching of ' + LOG_FILE + ' for ' + '*' + WATCH_FOR + '*' +
     ' started at ' + time.strftime('%Y-%m-%d %I:%M:%S %p'))
 
 
@@ -170,13 +167,16 @@ print(
 
 mtime_last = 0
 dtime_last = 0
-boxes_last =  []
+
 net = cv2.dnn.readNet(args['weights'], args['config'])
 mtime_cur = datetime.datetime.now()
 recording_id = 'None'
 recording_id_last = ''
+centers_last = [9999999999, 9999999999]
+boxes_last = []
 
-
+    
+    
 i = 1
 while True:
     try:
@@ -194,11 +194,11 @@ while True:
                 if recording_id == recording_id_last:
                     continue
                 print(str(ts) + '   Found Motion Recording on Camera ' + ' '.join(camera_name_id) + '. Recording ID is: ' + recording_id)
-        
-        
-        
+
+
+
                 confidences = []
-        
+
                 for root, directories, filenames in os.walk('/home/cichons/unifi-video/videos/'+ cameras[camera_name_id[1]] + '/' + date_path):
                     for filename in filenames: 
                         if fnmatch.fnmatch(filename, '*' + start + '*.mp4'):
@@ -207,28 +207,31 @@ while True:
                             img_path = root +'/' + filename
                             print(str(ts) + '   Running Object detection on: \'' + img_path + '\' from Camera: \'' + ' '.join(camera_name_id) +'\' ...')
                             logger.info(str(ts) + '   Trigger Count: ' + str(i) + 'Motion detected on Camera: \'' + ' '.join(camera_name_id) +'\'   Running Object detection on: \'' + img_path + '\'')
-        
+
                             # Detect Objects:
                             image = cv2.imread(img_path)
                             if image is not None:
                                 try:
-        
-                                    #image = cv2.resize(image, (0,0), fx=0.3, fy=0.3)
                                     (Height, Width) = image.shape[:2]
                                     blob = cv2.dnn.blobFromImage(image, scale, (416,416), (0,0,0), True, crop=False)
                                     net.setInput(blob)
                                     outs = net.forward(get_output_layers(net))
-        
-                                    boxes == []
+
+                                    boxes = []
                                     class_ids = []
+                                    dtime_cur = time.time()
+                                    confidences = []
+                                    centers = []
                                     for out in outs:
                                         for detection in out:
                                             scores = detection[5:]
                                             class_id = np.argmax(scores)
                                             confidence = scores[class_id]
                                             if confidence > conf_threshold and classes[class_id] in target_classes:
+                                                print('confidence and class good')
                                                 center_x = int(detection[0] * Width)
                                                 center_y = int(detection[1] * Height)
+                                                centers.append([center_x, center_y])
                                                 w = int(detection[2] * Width)
                                                 h = int(detection[3] * Height)
                                                 x = center_x - w / 2
@@ -238,8 +241,8 @@ while True:
                                                 boxes.append([x, y, w, h])
                                     if boxes == []:
                                         print("No Object Detected.")
-                                        pass
-        
+                                        continue
+
                                     indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
                                     if boxes != boxes_last:
                                         print(boxes)
@@ -252,48 +255,61 @@ while True:
                                             w = box[2]
                                             h = box[3]
                                             draw_prediction(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
-        
+
                                         boxed_img_path = '/home/cichons/unifi-video/object_detections/'+ str(start) +'_'+ str(camera_name_id[1]) +'_'+ str(recording_id) + '.jpg' 
                                         cv2.imwrite(boxed_img_path, image)
-                                        
-        
+
+
                                         cv2.waitKey()
-        
-                                        # Send Push Notification:
-                                        if len(confidences):
-                                            dtime_cur = time.time()
-                                            if boxes == boxes_last:
-                                                print('Object has been previously detected. Skipping this one.')
-                                            else:
-                                                if (dtime_cur - dtime_last) > time_between_push_notifications:
-        
-                                                    # Write to Log File
-                                                    logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + ' '.join(camera_name_id) +'\'   Video path is: \'' + video_path + '\'')
-        
-                                                    print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
-        
-                                                    # Sent Push Notification via Pushover:
-                                                    data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
-                                                    
-                                                    r = requests.post("https://api.pushover.net/1/messages.json", data = data,
-                                                    files = {
-                                                      "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
-                                                    })
-                                                    
-                                                    print(r.text)
-                                                    dtime_last = dtime_cur
-                                                else:
-                                                    print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Last Notification too recently.")
-                                    
+                                        # Calculate relative Distances between centers of new and previous detections:
+                                        distances = []
+                                        for c in centers:
+                                            for cl in centers_last:
+                                                #distances.append(np.mean((np.array(c) - np.array(cl))/(image.shape[0]*image.shape[0])))
+                                                distances.append(sum(np.array(c) - np.array(cl)))
+                                        
+                                        distances = np.sqrt(np.square(distances))
+                                        
+                                        if boxes != boxes_last and confidences and max(distances) > px_dist and (dtime_cur - dtime_last) > time_between_push_notifications:
+                                            print('boxes differ', boxes != boxes_last)
+                                            print('confidences good', confidences)
+                                            print('distances ok', max(distances) > 0.001)
+                                            print('time between notifications?', (dtime_cur - dtime_last) > time_between_push_notifications)
+
+
+                                            # Write to Log File
+                                            logger.info(str(ts) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + 'Trigger Count: ' + str(i) + ' detected on Camera: \'' + ' '.join(camera_name_id) +'\'   Video path is: \'' + video_path + '\'')
+
+                                            print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
+
+                                            # Sent Push Notification via Pushover:
+                                            data['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
+
+                                            r = requests.post("https://api.pushover.net/1/messages.json", data = data,
+                                            files = {
+                                              "attachment": (filename, open(boxed_img_path, "rb"), "image/jpeg")
+                                            })
+
+                                            print(r.text)
+                                            dtime_last = dtime_cur
+                                        else:
+                                            print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Notification unwanted.")
+                                            print('boxes differ', boxes != boxes_last)
+                                            print('confidences good', confidences)
+                                            print('distances to previous detections ok', max(distances) > 0.001)
+                                            print('time between notifications?', (dtime_cur - dtime_last) > time_between_push_notifications)
+                                            continue
+
                                     boxes_last = boxes
-                                    boxes = []
+                                    centers_last = centers
+
                                 except Exception as err:
                                     print(err)
-                                    pass
-        
+                                    continue
+
                             else:
                                 print('image: ' + img_path + ' not found')
-                                pass
+                                continue
                 recording_id_last = recording_id
                 recording_id = ''
     except Exception as err:
