@@ -85,11 +85,11 @@ WATCH_FOR = 'STOPPING REC'
 class_ids = []
 confidences = []
 boxes = []
-conf_threshold = 0.5
+conf_threshold = 0.6
 nms_threshold = 0.4
 scale = 0.00392
 time_between_push_notifications = 0 
-px_dist = 10 # Minumum Distance in Pixels between current and prevouis Detection
+px_dist = 20 # Minumum Distance in Pixels between current and prevouis Detection
 
 
 
@@ -172,7 +172,7 @@ net = cv2.dnn.readNet(args['weights'], args['config'])
 mtime_cur = datetime.datetime.now()
 recording_id = 'None'
 recording_id_last = ''
-centers_last = [9999999999, 9999999999]
+centers_last = [-10, -10]
 boxes_last = []
 
     
@@ -193,6 +193,8 @@ while True:
                 #recording_id = '5ba25ea1e4b0a01868310e29'
                 if recording_id == recording_id_last:
                     continue
+                
+                print('-------------------------------------------------------------------------------------------------------------------------------------')    
                 print(str(ts) + '   Found Motion Recording on Camera ' + ' '.join(camera_name_id) + '. Recording ID is: ' + recording_id)
 
 
@@ -261,19 +263,16 @@ while True:
 
 
                                         cv2.waitKey()
-                                        # Calculate relative Distances between centers of new and previous detections:
-                                        distances = []
-                                        for c in centers:
-                                            for cl in centers_last:
-                                                #distances.append(np.mean((np.array(c) - np.array(cl))/(image.shape[0]*image.shape[0])))
-                                                distances.append(sum(np.array(c) - np.array(cl)))
+                                        # Calculate relative Distances between centers of new and previous detections:                                        
+                                        distances = abs((centers_last) - np.array(centers))
                                         
-                                        distances = np.sqrt(np.square(distances))
+                                        print('centers', centers)
+                                        print('centers_last', centers_last)
                                         
-                                        if boxes != boxes_last and confidences and max(distances) > px_dist and (dtime_cur - dtime_last) > time_between_push_notifications:
+                                        if boxes != boxes_last and confidences and np.max(distances) > px_dist and (dtime_cur - dtime_last) > time_between_push_notifications:
                                             print('boxes differ', boxes != boxes_last)
                                             print('confidences good', confidences)
-                                            print('distances ok', max(distances) > 0.001)
+                                            print('distances ok', np.max(distances) > px_dist, distances)
                                             print('time between notifications?', (dtime_cur - dtime_last) > time_between_push_notifications)
 
 
@@ -296,7 +295,7 @@ while True:
                                             print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Notification unwanted.")
                                             print('boxes differ', boxes != boxes_last)
                                             print('confidences good', confidences)
-                                            print('distances to previous detections ok', max(distances) > 0.001)
+                                            print('distances to previous detections ok', np.max(distances) > px_dist, distances)
                                             print('time between notifications?', (dtime_cur - dtime_last) > time_between_push_notifications)
                                             continue
 
