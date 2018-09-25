@@ -89,7 +89,7 @@ conf_threshold = 0.6
 nms_threshold = 0.4
 scale = 0.00392
 time_between_push_notifications = 0 
-px_dist = 20 # Minumum Distance in Pixels between current and prevouis Detection
+px_dist = 30 # Minumum Distance in Pixels between current and prevouis Detection
 
 
 
@@ -172,6 +172,7 @@ net = cv2.dnn.readNet(args['weights'], args['config'])
 mtime_cur = datetime.datetime.now()
 recording_id = 'None'
 recording_id_last = ''
+centers_last_3rd = [-10, -10]
 centers_last = [-10, -10]
 boxes_last = []
 
@@ -264,7 +265,8 @@ while True:
 
                                         cv2.waitKey()
                                         # Calculate relative Distances between centers of new and previous detections:                                        
-                                        distances = abs((centers_last) - np.array(centers))
+                                        distances = abs(np.array([(centers_last) - np.array(centers), abs((centers_last_3rd) - np.array(centers))]))
+
                                         
                                         print('centers', centers)
                                         print('centers_last', centers_last)
@@ -300,6 +302,7 @@ while True:
                                             continue
 
                                     boxes_last = boxes
+                                    centers_last_3rd = centers_last
                                     centers_last = centers
 
                                 except Exception as err:
