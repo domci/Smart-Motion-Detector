@@ -89,7 +89,7 @@ conf_threshold = 0.6
 nms_threshold = 0.4
 scale = 0.00392
 time_between_push_notifications = 0 
-px_dist = 30 # Minumum Distance in Pixels between current and prevouis Detection
+px_dist = 70 # Minumum Distance in Pixels between current and prevouis Detection
 
 
 
@@ -172,7 +172,6 @@ net = cv2.dnn.readNet(args['weights'], args['config'])
 mtime_cur = datetime.datetime.now()
 recording_id = 'None'
 recording_id_last = ''
-centers_last_3rd = [-10, -10]
 centers_last = [-10, -10]
 boxes_last = []
 
@@ -182,7 +181,7 @@ i = 1
 while True:
     try:
         now = datetime.datetime.now()
-        date_path = str(now.year) + '/' + (now.month if len(str(now.month)) == 2 else '0' + str(now.month)) + '/' + str(now.day)
+        date_path = str(now.year) + '/' + str(now.month if len(str(now.month)) == 2 else '0' + str(now.month)) + '/' + str(now.day if len(str(now.day)) == 2 else '0' + str(now.day))
         # Monitor Log File:
         for i in tail(LOG_FILE, 1):
             if WATCH_FOR.lower() in i.lower():
@@ -231,6 +230,7 @@ while True:
                                             class_id = np.argmax(scores)
                                             confidence = scores[class_id]
                                             if confidence > conf_threshold and classes[class_id] in target_classes:
+                                                requests.get('http://192.168.1.229:8080/object_detected')
                                                 print('confidence and class good')
                                                 center_x = int(detection[0] * Width)
                                                 center_y = int(detection[1] * Height)
@@ -265,7 +265,7 @@ while True:
 
                                         cv2.waitKey()
                                         # Calculate relative Distances between centers of new and previous detections:                                        
-                                        distances = abs(np.array([(centers_last) - np.array(centers), abs((centers_last_3rd) - np.array(centers))]))
+                                        distances = abs(np.array([np.array(centers) - np.array(obj) for obj in centers_last]))
 
                                         
                                         print('centers', centers)
@@ -302,8 +302,8 @@ while True:
                                             continue
 
                                     boxes_last = boxes
-                                    centers_last_3rd = centers_last
                                     centers_last = centers
+                                    #centers = []
 
                                 except Exception as err:
                                     print(err)
