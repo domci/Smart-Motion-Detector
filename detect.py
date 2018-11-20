@@ -230,7 +230,11 @@ while True:
                                             class_id = np.argmax(scores)
                                             confidence = scores[class_id]
                                             if confidence > conf_threshold and classes[class_id] in target_classes:
-                                                requests.get('http://192.168.1.229:8080/object_detected')
+                                                try:
+                                                    requests.get('http://192.168.1.229:8080/object_detected')
+                                                except:
+                                                    pass
+                                                
                                                 print('confidence and class good')
                                                 center_x = int(detection[0] * Width)
                                                 center_y = int(detection[1] * Height)
