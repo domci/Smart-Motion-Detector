@@ -18,7 +18,7 @@ from imutils.video import FPS
 from multiprocessing import Process
 from multiprocessing import Queue
 import numpy as np
-import imutils
+#import imutils
 import time
 import cv2
 import json
@@ -301,9 +301,12 @@ while True: #for i in range(100):
                     if detector.no_person_counter == stop_recording_after:
                         print('[INFO] no person detected since ', detector.no_person_counter,' frames')
                         if detector.recording:
+                            """
                             stop_recording_thread = threading.Thread(target=detector.stop_recording, args=())
                             stop_recording_thread.daemon = True  # Daemonize thread
-                            stop_recording_thread.start() 
+                            stop_recording_thread.start()
+                            """
+                            detector.stop_recording()
                     continue
 
                 print('[INFO] Person detected', time.strftime("%d-%m-%Y %H:%M:%S"))
@@ -316,18 +319,21 @@ while True: #for i in range(100):
                 if detector.person_counter == 1 and not detector.recording:
 
                     # take snapshot and send push
+                    """
                     send_push_thread = threading.Thread(target=detector.send_push, args=())
                     send_push_thread.daemon = True  # Daemonize thread
                     send_push_thread.start() 
-
+                    """
+                    detector.send_push()
                     # if camera is not recording, start recording:
                     print('[INFO] shinobi is recording:', detector.recording)
                     if not detector.recording:
+                        """
                         start_recording_thread = threading.Thread(target=detector.start_recording, args=())
                         start_recording_thread.daemon = True # Daemonize thread
                         start_recording_thread.start() 
-
-
+                        """
+                        detector.start_recording()
 
 
         # If Video Stream returns no frame:
