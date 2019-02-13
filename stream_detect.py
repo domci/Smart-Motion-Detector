@@ -1,272 +1,355 @@
-#!/usr/bin/env python
+
+
+"""
+##############
+# TODO
+#############
+
+# Put paths/IPs into arguments
+# Add Bounding Boxes
+# Figure out additional Cameras
+#
+
+"""
 
 
 
-
-################################################
-# Import Libraries
-################################################
-from matplotlib import pyplot as plt
-import os
-import time
-import json
-import fnmatch
-import cv2
+from imutils.video import FPS
+from multiprocessing import Process
+from multiprocessing import Queue
 import numpy as np
+import imutils
+import time
+import cv2
+import json
 import requests
+import os
 import datetime
-import logging
-from logging.handlers import TimedRotatingFileHandler
-import datetime
-import glob
-from imutils.video import VideoStream
-from IPython.display import clear_output
-
-
-
-args =  {'classes': '/home/cichons/Smart-Motion-Detector/classes.txt',
-         'weights': '/home/cichons/Smart-Motion-Detector/yolov3.weights',
-         'config': '/home/cichons/Smart-Motion-Detector/yolov3.cfg',
-         'stream':'rtsp://172.17.0.2:7447/5b75de05e4b0a018229f268f_2',
-         'cam_name': 'Carport'
-        }
-
-
-################################################
-# Configure Log Handler
-################################################
-
-logger = logging.getLogger("Rotating Log")
-logger.setLevel(logging.INFO)
-
-logname = '/home/cichons/motioneye/logs/object_detected.log'
-handler = TimedRotatingFileHandler(logname, when="midnight", interval=1)
-handler.suffix = "%Y%m%d"
-logger.addHandler(handler)
+import threading
+import sys
+from threading import Lock
 
 
 
 
 
-
-################################################
-# Load Stuff
-################################################
-
-# Load Pushover Key File
-data=json.loads(open('/home/cichons/Smart-Motion-Detector/keys.json').read())
-
-
-
-
-classes = None
-
-with open(args['classes'], 'r') as f:
-    classes = [line.strip() for line in f.readlines()]
-
-COLORS = np.random.uniform(0, 255, size=(len(classes), 3))    
-
-
-
-
-
-
-################################################
-# Settings
-################################################
-
-class_ids = []
-confidences = []
-boxes = []
-conf_threshold = 0.6
-nms_threshold = 0.4
-scale = 0.00392
-time_between_push_notifications = 0 
-px_dist = 70 # Minumum Distance in Pixels between current and prevouis Detection
-
-
-
-target_classes = ['person',
- 'bicycle',
- 'car',
- 'motorcycle',
- 'bus',
- 'truck'
-]
-
-
-# Pushover Settings:
-data['pushover']['priority'] = 1 #2
-data['pushover']['retry'] = 30 
-data['pushover']['expire'] = 300
-
-
-################################################
-# Defining Functions
-################################################
-
-
-
-
-def get_output_layers(net):
-    layer_names = net.getLayerNames()
-    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-    return output_layers
-
-
-def draw_prediction(img, class_id, confidence, x, y, x_plus_w, y_plus_h):
-    label = str(classes[class_id]) + ': ' + str(round(confidence*100, 2))
-    color = COLORS[class_id]
-    cv2.rectangle(img, (x,y), (x_plus_w,y_plus_h), color, 2)
-    cv2.putText(img, label, (x-10,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-
-
-
-mtime_last = 0
-dtime_last = 0
-
-net = cv2.dnn.readNet(args['weights'], args['config'])
-centers_last = [-10, -10]
-boxes_last = []
-
-
-
-
-print("[INFO] warming up camera...")
-vs = VideoStream(src=args['stream'], framerate=3).start()
-time.sleep(2.0)
-
-
-print('cam_name: ', args['cam_name'])
-
-
-
-while True:
-    image = vs.read()
     
-    now = datetime.datetime.now()
-    camera_name = args['cam_name']
-    confidences = []
+args = {
+    'model': '/home/cichons/Smart-Motion-Detector/MobileNetSSD_deploy.caffemodel',
+    'prototxt': '/home/cichons/Smart-Motion-Detector/MobileNetSSD_deploy.prototxt.txt',
+    'confidence': 0.6
+}
+
+classes_detected = []
+labels_detected = []
+
+stop_recording_after = 80
+person_counter = 0
+no_person_counter = 0
+detections = None
+last_frame = np.array(0)
+
+
+
+
+
+
+
+
+
+# Make Thread Safe Print Function:
+mylock = Lock()
+p = print
+
+def print(*a, **b):
+	with mylock:
+		p(*a, **b)
+
+
+
+
+
+class detector:
     
+    # Initiate Values
+    def __init__(self):
+        print('[INFO] initiating Detector variables')
+        self.confidence = 0
+        self.push_time = 0
+        self.r = {'text':None}
+        self.inputQueue = Queue(maxsize=1)
+        self.outputQueue = Queue(maxsize=1)
+        self.detections = None
+        self.testing = False
+        self.recording = False
+        self.frame = []
+        self.raw_frame = []
+        self.person_counter = 0
+        self.no_person_counter = 0
+        self.fH = 0
+        self.fW = 0
+        self.img_path = ''
+        
+        
+        
+        # load API Keys
+        self.keys=json.loads(open('/home/cichons/Smart-Motion-Detector/keys.json').read())
+        self.pushover = self.keys['pushover']
+        self.pushover['message'] = 'Person detected! (new)'
+        
+        self.shinobi = self.keys['shinobi']
+        self.shinobi['GROUP_KEY'] = 'kcMz5HUxX4'
+        self.shinobi['MONITOR_ID'] = '9zwr33ysRF'
 
-    if image is not None:
-        print('detecting Objects...')
-        try:
-            (Height, Width) = image.shape[:2]
-            blob = cv2.dnn.blobFromImage(image, scale, (416,416), (0,0,0), True, crop=False)
-            net.setInput(blob)
-            outs = net.forward(get_output_layers(net))
 
-            boxes = []
-            class_ids = []
-            dtime_cur = time.time()
-            confidences = []
-            centers = []
-            for out in outs:
-                for detection in out:
-                    scores = detection[5:]
-                    class_id = np.argmax(scores)
-                    confidence = scores[class_id]
-                    if confidence > conf_threshold and classes[class_id] in target_classes:
-                        print(confidence)
-                        try:
-                            requests.get('http://192.168.1.22:8080/object_detected')
-                        except Exception as e:
-                            print(e)
-                            continue
-                        
-                        print(classes[class_id] + ' detected')
-                        print('confidence and class good')
-                        
-                        center_x = int(detection[0] * Width)
-                        center_y = int(detection[1] * Height)
-                        centers.append([center_x, center_y])
-                        w = int(detection[2] * Width)
-                        h = int(detection[3] * Height)
-                        x = center_x - w / 2
-                        y = center_y - h / 2
-                        class_ids.append(class_id)
-                        confidences.append(float(confidence))
-                        boxes.append([x, y, w, h])
-
+        
+        
+    def set_test_mode(self):
+        if self.testing:
+            self.testing = False
+            print("[INFO] ending test mode.")
+        else:
+            self.testing = True
+            print("[INFO] running in test mode.")
             
-            if boxes == []:
-                print("No Object Detected.")
-                boxes_last = boxes
-                centers_last = centers
+        
+
+
+    def init_model(self, prototxt, model_path):
+        # load our serialized model from disk
+        print("[INFO] loading model...")
+        self.net = cv2.dnn.readNetFromCaffe(prototxt, model_path)
+        # initialize the list of class labels MobileNet SSD was trained to
+        self.CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
+            "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+            "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
+            "sofa", "train", "tvmonitor"]
+        # detect, then generate a set of bounding box colors for each class
+        self.COLORS = np.random.uniform(0, 255, size=(len(self.CLASSES), 3))
+
+    
+    def init_monitor(self,url):
+        print("[INFO] starting video stream...")
+        self.vs = cv2.VideoCapture(url)
+        self.fps = FPS().start()
+        self.ret, self.raw_frame = self.vs.read()
+        print('[INFO] Stream open: ', self.vs.isOpened())
+        return self.vs
+    
+    
+      
+    
+    def send_push(self): #', '.join(list(set(classes))) + ' detected!'
+        """
+        print('[INFO] drawing boxes')
+        # compute the (x, y)-coordinates
+        # of the bounding box for the object
+        dims = np.array([self.fW, self.fH, self.fW, self.fH])
+        box = detections[0, 0, i, 3:7] * dims
+        (startX, startY, endX, endY) = box.astype("int")
+
+        # draw the prediction on the frame
+        cv2.rectangle(detector.frame, (startX, startY), (endX, endY),
+        detector.COLORS[idx], 2)
+        y = startY - 15 if startY - 15 > 15 else startY + 15
+        cv2.putText(detector.frame, label, (startX, y),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, detector.COLORS[idx], 2)
+        """
+        print('[INFO] storing boxed image to file')
+        self.img_path = '/home/cichons/nvr/snapshots/' + time.strftime("%Y%m%d_%H%M%S") + '.jpg'
+        cv2.imwrite(self.img_path, self.raw_frame)
+        
+        print('[INFO] sending Push Notification', time.strftime("%d-%m-%Y %H:%M:%S"))
+        r = requests.post("https://api.pushover.net/1/messages.json", data = self.pushover,
+        files = {
+          "attachment": (os.path.basename(self.img_path), open(self.img_path, "rb"), "image/jpeg")
+            })
+        print(r.text)
+
+        
+    def classify_frame(self):
+        print('[INFO] starting Classifier Process')
+        # keep looping
+        while True:
+            """
+            if self.testing:
+                
+                
+            """    
+            # check to see if there is a frame in our input queue
+            if not self.inputQueue.empty():
+                # grab the frame from the input queue, resize it, and
+                # construct a blob from it
+                self.frame = self.inputQueue.get()
+                self.raw_frame = self.frame
+                self.frame = cv2.resize(self.frame, (300, 300))
+                (self.fH, self.fW) = self.frame.shape[:2]
+                self.blob = cv2.dnn.blobFromImage(self.frame, 0.007843, (300, 300), 127.5)
+
+                # set the blob as input to our deep learning object
+                # detector and obtain the detections
+                self.net.setInput(self.blob)
+                self.detections = self.net.forward()
+
+                # write the detections to the output queue
+                self.outputQueue.put(self.detections)
+
+    def start_recording(self):
+        print('[INFO] starting recording')
+        r = requests.get('http://192.168.1.233:8080/' + self.shinobi['key']+ '/monitor/' + self.shinobi['GROUP_KEY'] + '/' + self.shinobi['MONITOR_ID'] + '/record')
+        self.recording = True
+        print(r.text)
+        return r 
+
+    def stop_recording(self):
+        print('[INFO] stopping recording')
+        r = requests.get('http://192.168.1.233:8080/' + self.shinobi['key']+ '/monitor/' + self.shinobi['GROUP_KEY'] + '/' + self.shinobi['MONITOR_ID'] + '/start')
+        self.recording = False
+        print(r.text)
+        return r 
+    
+
+
+#create detector Object:
+detector = detector()
+
+
+
+#initiate detector Model:
+detector.init_model(args["prototxt"], args["model"])
+
+vs = detector.init_monitor('rtsp://192.168.1.240:554/s1')
+
+
+# start background processes
+print("[INFO] starting process...")
+classifier_process = Process(target=detector.classify_frame)
+classifier_process.daemon = True
+classifier_process.start()
+
+
+
+
+
+
+print('[INFO] starting detector')
+
+
+while True: #for i in range(100):
+    try:
+        now = datetime.datetime.now()
+
+        # grab the frame from the threaded video stream, resize it, and
+        # grab its dimensions
+        ret, detector.raw_frame = vs.read()
+
+        if ret:
+            if np.array_equal(detector.raw_frame, last_frame):
+                print('[INFO] Frame not new')
                 continue
 
-            indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
-            
-            if boxes == boxes_last:
-                logger.info(str(datetime.datetime.now()) + '   ' + 'Objects where previously detected on: \'' + camera_name + '\'')
-                print('Objects where previously detected.')
+            no_frame_counter = 0
+            if detector.testing:
+                detector.frame = cv2.imread('/home/cichons/Smart-Motion-Detector/Pedestrian-Safety.jpg')
             else:
-                print(boxes)
-                print(boxes_last)
-                for i in indices:
-                    i = i[0]
-                    box = boxes[i]
-                    x = box[0]
-                    y = box[1]
-                    w = box[2]
-                    h = box[3]
-                    draw_prediction(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
+                detector.frame = detector.raw_frame
+            
+            
 
-                boxed_img_path = '/home/cichons/motioneye/videos/detections/'+ str(now) +'_'+ str(camera_name) + '.jpg' 
-                cv2.imwrite(boxed_img_path, image)
-                    
+            # if the input queue *is* empty, give the current frame to
+            # classify
+            if detector.inputQueue.empty():
+                detector.inputQueue.put(detector.frame)
 
-                # Calculate relative Distances between centers of new and previous detections:                                        
-                distances = abs(np.array([np.array(centers) - np.array(obj) for obj in centers_last]))
-                if len(distances) == 0:
-                    distances = 1000
-                    distances
-
-                print('distances ', distances)
-                print('centers ', centers)
-                print('centers_last ', centers_last)
-                print('boxes differ ', boxes != boxes_last)
-                print('confidences good ', confidences)
-                print('distances ok ', np.max(distances) > px_dist, distances)
-                print('max distance ', np.max(distances))
-                print('time between notifications? ', (dtime_cur - dtime_last) > time_between_push_notifications)
+            if not detector.outputQueue.empty():
+                detections = detector.outputQueue.get()
                 
+            # check to see if our detectios are not None (and if so, we'll
+            # draw the detections on the frame)
+            if detections is not None:
+                #print('[INFO] Checking detections')
+                # reset detection lists:
+                classes_detected = []
+                labels_detected = []
 
-                if boxes != boxes_last and confidences and np.max(distances) > px_dist and (dtime_cur - dtime_last) > time_between_push_notifications:
+                # loop over detections
+                for i in np.arange(0, detections.shape[2]):
+                    # extract the confidence (i.e., probability) associated
+                    # with the prediction
+                    confidence = detections[0, 0, i, 2]
+                    # filter out weak detections by ensuring the `confidence`
+                    # is greater than the minimum confidence
+                    if confidence < args['confidence']:
+                        continue
 
-                    # Write to Log File
-                    logger.info(str(datetime.datetime.now()) + '   ' + ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected on Camera: \'' + camera_name + '\'')
+                    # extract the index of the class label from the `detections`
+                    idx = int(detections[0, 0, i, 1])
 
-                    print(', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!')
+                    label = "{}: {:.2f}%".format(detector.CLASSES[idx], confidence * 100)
+                    #print(label)
 
-                    # Sent Push Notification via Pushover:
-                    data['pushover']['message'] = ', '.join(list(set([classes[i] for i in class_ids]))) + ' detected!'
+                    labels_detected.append(label)
+                    classes_detected.append(detector.CLASSES[idx])
 
-                    r = requests.post("https://api.pushover.net/1/messages.json", data = data['pushover'],
-                    files = {
-                      "attachment": (str(now) +'_'+ str(camera_name) + '.jpg', open(boxed_img_path, "rb"), "image/jpeg")
-                    })
-
-                    print(r.text)
-                    dtime_last = dtime_cur
-                else:
-                    print("Detected: " + ', '.join(list(set([classes[i] for i in class_ids]))) + ". Notification unwanted.")
-                    print('boxes differ?', boxes != boxes_last)
-                    print('confidences good?', confidences)
-                    print('distances to previous detections ok?', np.max(distances) > px_dist, distances)
-                    print('time between notifications?', (dtime_cur - dtime_last) > time_between_push_notifications)
+                if 'person' not in classes_detected:
+                    
+                    #print('[INFO] No Person in Frame.')
+                    detector.no_person_counter = detector.no_person_counter + 1
+                    detector.person_counter = 0
+                    
+                    # if x frames without person, stop recording
+                    if detector.no_person_counter == stop_recording_after:
+                        print('[INFO] no person detected since ', detector.no_person_counter,' frames')
+                        if detector.recording:
+                            stop_recording_thread = threading.Thread(target=detector.stop_recording, args=())
+                            stop_recording_thread.daemon = True  # Daemonize thread
+                            stop_recording_thread.start() 
                     continue
 
-            boxes_last = boxes
-            centers_last = centers
-            #centers = []
+                print('[INFO] Person detected', time.strftime("%d-%m-%Y %H:%M:%S"))
 
-        except Exception as e:
-            print(e)
-            continue
+                # set counters:
+                detector.no_person_counter = 0
+                detector.person_counter = detector.person_counter + 1
 
-    else:
-        print('image not found')
-        continue
+                # send Push if person_couner == 0 (New detection in this session)
+                if detector.person_counter == 1 and not detector.recording:
+
+                    # take snapshot and send push
+                    send_push_thread = threading.Thread(target=detector.send_push, args=())
+                    send_push_thread.daemon = True  # Daemonize thread
+                    send_push_thread.start() 
+
+                    # if camera is not recording, start recording:
+                    print('[INFO] shinobi is recording:', detector.recording)
+                    if not detector.recording:
+                        start_recording_thread = threading.Thread(target=detector.start_recording, args=())
+                        start_recording_thread.daemon = True # Daemonize thread
+                        start_recording_thread.start() 
+
+
+
+
+        # If Video Stream returns no frame:
+        else:
+            no_frame_counter = no_frame_counter + 1
+            print('[INFO] no_frame_counter: ', no_frame_counter)
+            print('[INFO] Stream open?', vs.isOpened())
+
+            if no_frame_counter >= 10 or vs.isOpened() == False:
+                print('[INFO] Re-connecting Stream...'. time.strftime("%d-%m-%Y %H:%M:%S"))
+                vs = cv2.VideoCapture('rtsp://192.168.1.240:554/s1')
+                fps = FPS().start()
+                ret, detector.raw_frame = vs.read()
+                if ret:
+                    no_frame_counter = 0
+                continue
+
+        last_frame = detector.raw_frame
+    except KeyboardInterrupt:
+        print('[INFO] exiting program', time.strftime("%d-%m-%Y %H:%M:%S"))
+        if detector.recording:
+            detector.stop_recording()
+        sys.exit()
+    except Exception as err:
+        print(err)
