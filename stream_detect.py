@@ -28,6 +28,7 @@ import datetime
 import threading
 import sys
 from threading import Lock
+from pprint import pprint
 
 
 
@@ -98,7 +99,7 @@ class detector:
         self.pushover['message'] = 'Person detected! (new)'
         
         self.shinobi = self.keys['shinobi']
-        self.shinobi['GROUP_KEY'] = 'kcMz5HUxX4'
+        self.shinobi['GROUP_KEY'] = 'hagohigmxde'
         self.shinobi['MONITOR_ID'] = '9zwr33ysRF'
 
 
@@ -245,7 +246,7 @@ while True: #for i in range(100):
 
         if ret:
             if np.array_equal(detector.raw_frame, last_frame):
-                print('[INFO] Frame not new')
+                print('[INFO] Frame not new \n')
                 continue
 
             no_frame_counter = 0
@@ -263,10 +264,12 @@ while True: #for i in range(100):
 
             if not detector.outputQueue.empty():
                 detections = detector.outputQueue.get()
-                
+            
+            print('[INFO] Number of detected objects in frame:', len(detections) if detections is not None else 0, end ="\r", flush=True)            
             # check to see if our detectios are not None (and if so, we'll
             # draw the detections on the frame)
             if detections is not None:
+                
                 #print('[INFO] Checking detections')
                 # reset detection lists:
                 classes_detected = []
@@ -287,10 +290,16 @@ while True: #for i in range(100):
 
                     label = "{}: {:.2f}%".format(detector.CLASSES[idx], confidence * 100)
                     #print(label)
-
+                    print('\n')
+                    print('[INFO] Object detected', label, end ="\r", flush=True) 
+                    
+                    
                     labels_detected.append(label)
                     classes_detected.append(detector.CLASSES[idx])
-
+                
+               
+                    
+                    
                 if 'person' not in classes_detected:
                     
                     #print('[INFO] No Person in Frame.')
